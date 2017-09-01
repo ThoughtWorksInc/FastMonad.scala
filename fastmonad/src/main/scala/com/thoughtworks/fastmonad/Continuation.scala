@@ -20,6 +20,13 @@ object Continuation {
     }
   }
 
+  trait NoState extends NoStateIO[NoState] {
+    override def result(): NoState = this
+  }
+
+  trait NoStateContinuation[+A] extends Continuation[NoState, A]
+
+  trait NoStateIO[+A] extends IO[NoState, A] with NoStateContinuation[A]
 }
 
 trait Continuation[R <: Continuation[R, R], +A] extends Any with Monad[A] {
