@@ -10,6 +10,21 @@ import scala.language.implicitConversions
 
 object Continuation {
 
+  abstract class Suspend[State <: Continuation[State, State]] extends Async[State, State] {
+    def next(): Continuation[State, State]
+
+    override def foreach(continue: (State) => State): State = {
+      next().foreach(continue)
+    }
+//
+//    override def step(continue: (State) => Continuation[State, State]): Continuation[State, State] = {
+//      next().step(continue)
+//    }
+  }
+
+  @inline
+  def suspend[State <: Continuation[State, State]](suspend: Suspend[State]) = suspend
+
   abstract class Pure[State <: Continuation[State, State], +A] extends Delay[State, A] {
     def result: A
   }
@@ -21,17 +36,22 @@ object Continuation {
       f(result())
     }
 
-    final def flatMap[B](f: (A) => Continuation[State, B]): Async[State, B] = { continue =>
-      f(result()).foreach(continue)
+    final def flatMap[B](f: (A) => Continuation[State, B]): Shift[State, B] = { continue =>
+      suspend { () =>
+        f(result()).step { b =>
+          suspend { () =>
+            continue(b)
+          }
+        }
+      }
     }
 
-    // @inline
+    @inline
     final def step(continue: A => Continuation[State, State]): Continuation[State, State] = {
-      // TODO: tail call
       continue(result())
     }
 
-    // @inline
+    @inline
     final def foreach(continue: A => State): State = {
       // TODO: tail call
       continue(result())
@@ -41,6 +61,8 @@ object Continuation {
   @tailrec
   final def reset[State <: Continuation[State, State]](continue: Continuation[State, State]): State = {
     continue match {
+      case suspend: Suspend[State] => // FIXME: Remove hard-coded Suspend case
+        reset(suspend.next())
       case pure: Pure[State, State] =>
         pure.result
       case tailCall =>
@@ -50,38 +72,37 @@ object Continuation {
 
   abstract class Bind[State <: Continuation[State, State], +A] extends Continuation[State, A] {
 
-    // @inline
+    @inline
     final def map[B](f: (A) => B): Async[State, B] = { continueB =>
       foreach { a =>
         continueB(f(a))
       }
     }
 
-    // @inline
+    @inline
     final def flatMap[B](f: A => Continuation[State, B]): Shift[State, B] = { continue =>
-      val delay: Delay[State, State] = { () =>
-        step { a =>
-          f(a).flatMap(continue)
-        }
+      step { a =>
+        f(a).flatMap(continue)
       }
-      delay
     }
 
   }
 
   abstract class Async[State <: Continuation[State, State], +A] extends Bind[State, A] {
 
-    // @inline
+    @inline
     final def step(continue: (A) => Continuation[State, State]): Continuation[State, State] = {
-      foreach { a =>
-        Continuation.reset(continue(a))
+      suspend { () =>
+        foreach { a =>
+          Continuation.reset(continue(a))
+        }
       }
     }
   }
 
   abstract class Shift[State <: Continuation[State, State], +A] extends Bind[State, A] {
 
-    // @inline
+    @inline
     final def foreach(continue: A => State): State = {
       Continuation.reset(step(continue))
     }
