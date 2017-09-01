@@ -3,43 +3,51 @@ import scala.annotation.tailrec
 
 object Continuation {
 
-  abstract class IO[R <: Continuation[R, R], +A] extends Continuation[R, A] {
+  class State extends Continuation[State] {
+    def step(continue: (State) => Continuation[State]): Continuation[State] = {
+      continue(this)
+    }
+  }
+
+  abstract class IO[+A] extends Continuation[A] {
     def result(): A
-    final def step(continue: A => Continuation[R, R]): Continuation[R, R] = {
+    final def step(continue: A => Continuation[State]): Continuation[State] = {
       continue(result())
     }
   }
 
   @tailrec
-  final def reset[R <: Continuation[R, R]](continue: Continuation[R, R]): R = {
+  final def reset(continue: Continuation[State]): State = {
     continue match {
-      case io: IO[R, R] =>
+      case state: State =>
+        state
+      case io: IO[State] =>
         io.result()
       case tailCall =>
-        reset(tailCall.step(identity[R]))
+        reset(tailCall.step(identity[State]))
     }
   }
 
 }
 
-trait Continuation[R <: Continuation[R, R], +A] extends Any with Monad[A] {
+trait Continuation[+A] extends Any with Monad[A] {
+  import Continuation.State
+  type F[+A] = Continuation[A]
+  type G[+A] = Continuation[A]
 
-  type F[+A] = Continuation[R, A]
-  type G[+A] = Continuation[R, A]
-
-  final def run(continue: A => Continuation[R, R]): R = {
+  final def run(continue: A => Continuation[State]): State = {
     Continuation.reset(step(continue))
   }
 
-  def map[B](f: (A) => B): Continuation[R, B] = { continueB =>
+  def map[B](f: (A) => B): Continuation[B] = { continueB =>
     step { a => continueR =>
       continueB(f(a))
     }
   }
 
-  def step(continue: A => Continuation[R, R]): Continuation[R, R]
+  def step(continue: A => Continuation[State]): Continuation[State]
 
-  def flatMap[B](f: A => Continuation[R, B]): Continuation[R, B] = { continue =>
+  def flatMap[B](f: A => Continuation[B]): Continuation[B] = { continue =>
     step { a =>
       f(a).flatMap(continue)
     }
