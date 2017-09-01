@@ -1,11 +1,53 @@
 package com.thoughtworks.fastmonad
+import com.thoughtworks.fastmonad.Continuation.AnyContinuation.AnyState
+
 import scala.annotation.tailrec
+import scala.concurrent.SyncVar
+import scala.language.higherKinds
+import scala.language.implicitConversions
 
 object Continuation {
 
-  trait IO[State <: Continuation[State, State], +Result] extends Continuation[State, Result] {
-    def result(): Result
-    final def step(continue: Result => Continuation[State, State]): Continuation[State, State] = {
+  trait Suspend[State <: Continuation[State, State], +A] extends Bind[State, A] {
+    def step(): Continuation[State, A]
+
+    @tailrec
+    private def run(): Continuation[State, A] = {
+      step() match {
+        case suspend: Suspend[State, A] =>
+          suspend.run()
+        case last =>
+          last
+      }
+    }
+    final def foreach(continue: (A) => State): State = {
+      run().foreach(continue)
+    }
+
+    final def step(continue: (A) => Continuation[State, State]): Continuation[State, State] = {
+      run().step(continue)
+    }
+
+  }
+
+  trait Return[State <: Continuation[State, State], +A] extends Continuation[State, A] {
+    def result(): A
+
+    final def map[B](f: (A) => B): Return[State, B] = { () =>
+      f(result())
+    }
+
+    final def flatMap[B](f: (A) => Continuation[State, B]): Suspend[State, B] = { () =>
+      f(result())
+    }
+
+    @inline
+    final def step(continue: A => Continuation[State, State]): Continuation[State, State] = {
+      continue(result())
+    }
+
+    @inline
+    final def foreach(continue: A => State): State = {
       continue(result())
     }
   }
@@ -13,51 +55,79 @@ object Continuation {
   @tailrec
   final def reset[State <: Continuation[State, State]](continue: Continuation[State, State]): State = {
     continue match {
-      case io: IO[State, State] =>
+      case io: Return[State, State] =>
         io.result()
       case tailCall =>
         reset(tailCall.step(identity[State]))
     }
   }
 
-  object NoState {
-    private val Instance = new NoState
+  trait Bind[State <: Continuation[State, State], +A] extends Continuation[State, A] {
 
-    def apply(): NoState = Instance
+    @inline
+    final def map[B](f: (A) => B): Async[State, B] = { continueB =>
+      foreach { a =>
+        continueB(f(a))
+      }
+    }
 
-    type Continuation[+Result] = com.thoughtworks.fastmonad.Continuation[NoState, Result]
+    @inline
+    final def flatMap[B](f: A => Continuation[State, B]): Shift[State, B] = { continue =>
+      step { a =>
+        f(a).flatMap(continue)
+      }
+    }
 
-    type IO[+Result] = com.thoughtworks.fastmonad.Continuation.IO[NoState, Result]
   }
 
-  final case class NoState private[Continuation] () extends NoState.IO[NoState] {
-    override def result(): NoState = this
+  trait Async[State <: Continuation[State, State], +A] extends Bind[State, A] {
+
+    @inline
+    final def step(continue: (A) => Continuation[State, State]): Continuation[State, State] = {
+      foreach { a =>
+        Continuation.reset(continue(a))
+      }
+    }
+  }
+
+  trait Shift[State <: Continuation[State, State], +A] extends Bind[State, A] {
+
+    @inline
+    final def foreach(continue: A => State): State = {
+      Continuation.reset(step(continue))
+    }
+
+  }
+
+  type AnyContinuation[+A] = Continuation[AnyState, A]
+  object AnyContinuation {
+
+    final class AnyState private[AnyContinuation] () extends Return[AnyState, AnyState] {
+      override def result(): AnyState = this
+    }
+    val AnyState = new AnyState
+
+    implicit def ToAnyState[A](a: A): AnyState = AnyState
+
+    trait Delay[+A] extends Return[AnyState, A]
+
+    def delay[A](f: Delay[A]): AnyContinuation[A] = f
+
+    def blockingAwait[A](continuation: AnyContinuation[A]): A = {
+      val box: SyncVar[A] = new SyncVar
+      continuation.foreach { (a: A) =>
+        box.put(a)
+      }
+      box.take
+    }
+
   }
 
 }
 
-trait Continuation[State <: Continuation[State, State], +Result] extends Any with Monad[Result] {
-
+trait Continuation[State <: Continuation[State, State], +A] extends Monad[A] {
   type UpperBound[+A] = Continuation[State, A]
   type LowerBound[+A] = Continuation[State, A]
-
-  /** @usecase def onComplete(continue: A => State): State = ???
-    */
-  final def onComplete(continue: Result => Continuation[State, State]): State = {
-    Continuation.reset(step(continue))
-  }
-
-  def map[B](f: (Result) => B): Continuation[State, B] = { continueB =>
-    step { a => continueR =>
-      continueB(f(a))
-    }
-  }
-
-  def step(continue: Result => Continuation[State, State]): Continuation[State, State]
-
-  def flatMap[B](f: Result => Continuation[State, B]): Continuation[State, B] = { continue =>
-    step { a =>
-      f(a).flatMap(continue)
-    }
-  }
+  def foreach(continue: A => State): State
+  def step(continue: A => Continuation[State, State]): Continuation[State, State]
 }
