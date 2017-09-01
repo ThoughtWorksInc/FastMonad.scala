@@ -1,21 +1,25 @@
 package com.thoughtworks.fastmonad
 
 import scala.annotation.tailrec
-//
-///**
-//  * @author 杨博 (Yang Bo)
-//  */
-//trait Monad[+A] extends Any {
+import scala.language.higherKinds
+
+/**
+  * @author 杨博 (Yang Bo)
+  */
+trait Monad[+A] extends Any { outer =>
+//  F[+A] <: Monad[F, G, A], G[+A] >: F[A] <: Monad[F, G, A],
+  type F[+A] <: Monad[A]
+  type G[+A] <: Monad[A]
 //  def map[B](f: A => B): Monad[B] = {
 //    flatMap { a =>
 //      val io: IO[B] = () => f(a)
 //      io
 //    }
 //  }
-//
-//  def flatMap[B](f: A => Monad[B]): Monad[B]
-//
-//}
+  def map[B](f: A => B): F[B]
+  def flatMap[B](f: A => G[B]): F[B]
+
+}
 
 //abstract class IO[A] extends Monad[A] {
 //  def run(): A
