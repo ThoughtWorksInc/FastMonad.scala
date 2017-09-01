@@ -8,37 +8,19 @@ import scala.language.implicitConversions
 
 object Continuation {
 
-  trait Suspend[State <: Continuation[State, State], +A] extends Bind[State, A] {
-    def step(): Continuation[State, A]
-
-    @tailrec
-    private def run(): Continuation[State, A] = {
-      step() match {
-        case suspend: Suspend[State, A] =>
-          suspend.run()
-        case last =>
-          last
-      }
-    }
-    final def foreach(continue: (A) => State): State = {
-      run().foreach(continue)
-    }
-
-    final def step(continue: (A) => Continuation[State, State]): Continuation[State, State] = {
-      run().step(continue)
-    }
-
+  trait Pure[State <: Continuation[State, State], +A] extends Delay[State, A] {
+    def result: A
   }
 
-  trait Return[State <: Continuation[State, State], +A] extends Continuation[State, A] {
+  trait Delay[State <: Continuation[State, State], +A] extends Continuation[State, A] {
     def result(): A
 
-    final def map[B](f: (A) => B): Return[State, B] = { () =>
+    final def map[B](f: (A) => B): Delay[State, B] = { () =>
       f(result())
     }
 
-    final def flatMap[B](f: (A) => Continuation[State, B]): Suspend[State, B] = { () =>
-      f(result())
+    final def flatMap[B](f: (A) => Continuation[State, B]): Async[State, B] = { continue =>
+      f(result()).foreach(continue)
     }
 
     @inline
@@ -55,8 +37,8 @@ object Continuation {
   @tailrec
   final def reset[State <: Continuation[State, State]](continue: Continuation[State, State]): State = {
     continue match {
-      case io: Return[State, State] =>
-        io.result()
+      case pure: Pure[State, State] =>
+        pure.result
       case tailCall =>
         reset(tailCall.step(identity[State]))
     }
@@ -102,18 +84,17 @@ object Continuation {
   type AnyContinuation[+A] = Continuation[AnyState, A]
   object AnyContinuation {
 
-    final class AnyState private[AnyContinuation] () extends Return[AnyState, AnyState] {
-      override def result(): AnyState = this
+    final class AnyState private[AnyContinuation] () extends Pure[AnyState, AnyState] {
+      override def result = this
     }
+
     val AnyState = new AnyState
 
     implicit def ToAnyState[A](a: A): AnyState = AnyState
 
-    trait Delay[+A] extends Return[AnyState, A]
+    def delay[A](f: Delay[AnyState, A]): AnyContinuation[A] = f
 
-    def delay[A](f: Delay[A]): AnyContinuation[A] = f
-
-    def blockingAwait[A](continuation: AnyContinuation[A]): A = {
+    final def blockingAwait[A](continuation: AnyContinuation[A]): A = {
       val box: SyncVar[A] = new SyncVar
       continuation.foreach { (a: A) =>
         box.put(a)
