@@ -1,18 +1,20 @@
 package com.thoughtworks.fastmonad
+import com.thoughtworks.fastmonad.Continuation.AnyContinuation
 import com.thoughtworks.fastmonad.Continuation.AnyContinuation.AnyState
 
 import scala.annotation.tailrec
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.SyncVar
 import scala.language.higherKinds
 import scala.language.implicitConversions
 
 object Continuation {
 
-  trait Pure[State <: Continuation[State, State], +A] extends Delay[State, A] {
+  abstract class Pure[State <: Continuation[State, State], +A] extends Delay[State, A] {
     def result: A
   }
 
-  trait Delay[State <: Continuation[State, State], +A] extends Continuation[State, A] {
+  abstract class Delay[State <: Continuation[State, State], +A] extends Continuation[State, A] {
     def result(): A
 
     final def map[B](f: (A) => B): Delay[State, B] = { () =>
@@ -23,13 +25,15 @@ object Continuation {
       f(result()).foreach(continue)
     }
 
-    @inline
+    // @inline
     final def step(continue: A => Continuation[State, State]): Continuation[State, State] = {
+      // TODO: tail call
       continue(result())
     }
 
-    @inline
+    // @inline
     final def foreach(continue: A => State): State = {
+      // TODO: tail call
       continue(result())
     }
   }
@@ -44,27 +48,30 @@ object Continuation {
     }
   }
 
-  trait Bind[State <: Continuation[State, State], +A] extends Continuation[State, A] {
+  abstract class Bind[State <: Continuation[State, State], +A] extends Continuation[State, A] {
 
-    @inline
+    // @inline
     final def map[B](f: (A) => B): Async[State, B] = { continueB =>
       foreach { a =>
         continueB(f(a))
       }
     }
 
-    @inline
+    // @inline
     final def flatMap[B](f: A => Continuation[State, B]): Shift[State, B] = { continue =>
-      step { a =>
-        f(a).flatMap(continue)
+      val delay: Delay[State, State] = { () =>
+        step { a =>
+          f(a).flatMap(continue)
+        }
       }
+      delay
     }
 
   }
 
-  trait Async[State <: Continuation[State, State], +A] extends Bind[State, A] {
+  abstract class Async[State <: Continuation[State, State], +A] extends Bind[State, A] {
 
-    @inline
+    // @inline
     final def step(continue: (A) => Continuation[State, State]): Continuation[State, State] = {
       foreach { a =>
         Continuation.reset(continue(a))
@@ -72,9 +79,9 @@ object Continuation {
     }
   }
 
-  trait Shift[State <: Continuation[State, State], +A] extends Bind[State, A] {
+  abstract class Shift[State <: Continuation[State, State], +A] extends Bind[State, A] {
 
-    @inline
+    // @inline
     final def foreach(continue: A => State): State = {
       Continuation.reset(step(continue))
     }
@@ -106,7 +113,7 @@ object Continuation {
 
 }
 
-trait Continuation[State <: Continuation[State, State], +A] extends Monad[A] {
+abstract class Continuation[State <: Continuation[State, State], +A] extends Monad[A] {
   type UpperBound[+A] = Continuation[State, A]
   type LowerBound[+A] = Continuation[State, A]
   def foreach(continue: A => State): State
