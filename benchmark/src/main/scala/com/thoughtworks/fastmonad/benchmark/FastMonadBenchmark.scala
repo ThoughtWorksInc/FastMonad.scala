@@ -1,6 +1,7 @@
 package com.thoughtworks.fastmonad.benchmark
 
-import com.thoughtworks.fastmonad.Continuation.AnyContinuation
+import com.thoughtworks.fastmonad.Continuations.UnitContinuation
+//import com.thoughtworks.fastmonad.TryT
 import org.openjdk.jmh.annotations._
 
 import scala.collection.mutable.ListBuffer
@@ -14,7 +15,7 @@ class FastMonadBenchmark {
 
 //  @Benchmark
 //  def sequenceScalazS(): Long = {
-//    val tasks = (0 until 1000).map(_ => ScalazTask.delay(1)).toList
+//    val tasks = (0 until 10000000).map(_ => ScalazTask.delay(1)).toList
 //    val init = ScalazTask.delay(ListBuffer.empty[Int])
 //    tasks
 //      .foldLeft(init)((acc, elem) => acc.flatMap(lb => elem.map(e => lb += e)))
@@ -24,13 +25,14 @@ class FastMonadBenchmark {
 
   @Benchmark
   def sequenceFastMonadS(): Long = {
-    val tasks = (0 until 1000).map(_ => AnyContinuation.delay(() => 1)).toList
-    val init: AnyContinuation[ListBuffer[Int]] = AnyContinuation.delay(() => ListBuffer.empty[Int])
-    AnyContinuation.blockingAwait(
-      tasks
-        .foldLeft(init)((acc, elem) => acc.flatMap(lb => elem.map(e => lb += e)))
-        .map(_.toList.sum.toLong)
-    )
+    val tasks =
+      (0 until 1000).map(_ => (UnitContinuation.delay[Int](() => 1))).toList
+    val init: UnitContinuation[ListBuffer[Int]] = (UnitContinuation.delay(() => ListBuffer.empty[Int]))
+    tasks
+      .foldLeft(init)((acc, elem) => acc.flatMap(lb => elem.map(e => lb += e)))
+      .map(_.toList.sum.toLong)
+      .blockingAwait
+
   }
 
 }
