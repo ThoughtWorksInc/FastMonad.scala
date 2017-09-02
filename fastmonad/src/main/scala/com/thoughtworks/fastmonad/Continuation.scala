@@ -10,20 +10,35 @@ import scala.language.implicitConversions
 
 object Continuation {
 
-  abstract class Suspend[State <: Continuation[State, State]] extends Async[State, State] {
-    def next(): Continuation[State, State]
+  abstract class Suspend[State <: Continuation[State, State], +A] extends Continuation[State, A] {
+    def next(): Continuation[State, A]
 
-    override def foreach(continue: (State) => State): State = {
+    @inline
+    final def map[B](f: (A) => B): Async[State, B] = { continueB =>
+      foreach { a =>
+        continueB(f(a))
+      }
+    }
+
+    @inline
+    final def flatMap[B](f: A => Continuation[State, B]): Shift[State, B] = { continue =>
+      step { a =>
+        f(a).flatMap(continue)
+      }
+    }
+
+    final def foreach(continue: A => State): State = {
+      // TODO: optimize
       next().foreach(continue)
     }
-//
-//    override def step(continue: (State) => Continuation[State, State]): Continuation[State, State] = {
-//      next().step(continue)
-//    }
+
+    final def step(continue: (A) => Continuation[State, State]): Continuation[State, State] = {
+      next().step(continue)
+    }
   }
 
   @inline
-  def suspend[State <: Continuation[State, State]](suspend: Suspend[State]) = suspend
+  def suspend[State <: Continuation[State, State], A](suspend: Suspend[State, A]) = suspend
 
   abstract class Pure[State <: Continuation[State, State], +A] extends Delay[State, A] {
     def result: A
@@ -36,13 +51,9 @@ object Continuation {
       f(result())
     }
 
-    final def flatMap[B](f: (A) => Continuation[State, B]): Shift[State, B] = { continue =>
+    final def flatMap[B](f: (A) => Continuation[State, B]): Suspend[State, B] = { () =>
       suspend { () =>
-        f(result()).step { b =>
-          suspend { () =>
-            continue(b)
-          }
-        }
+        f(result())
       }
     }
 
@@ -61,10 +72,12 @@ object Continuation {
   @tailrec
   final def reset[State <: Continuation[State, State]](continue: Continuation[State, State]): State = {
     continue match {
-      case suspend: Suspend[State] => // FIXME: Remove hard-coded Suspend case
-        reset(suspend.next())
       case pure: Pure[State, State] =>
         pure.result
+      case suspend: Suspend[State, State] => // FIXME: Remove hard-coded Suspend case
+        reset(suspend.next())
+      case delay: Delay[State, State] =>
+        reset(delay.result())
       case tailCall =>
         reset(tailCall.step(identity[State]))
     }
