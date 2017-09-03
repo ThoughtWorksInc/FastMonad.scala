@@ -42,6 +42,6 @@ class TryTs(val underlyingCompanion: Monads) extends Monads {
 object TryTs {
 
   object Task extends TryTs(UnitContinuation)
-  type Task = Task.Type
+  type Task[+A] = Task.Type[A]
 
 }
