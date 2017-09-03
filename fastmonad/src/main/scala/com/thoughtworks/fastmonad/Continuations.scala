@@ -57,15 +57,13 @@ trait Continuations[Result] extends Monads {
       }
     }
 
-    override def map[B](f: (A) => B): Async[B] = {
-      ???
-//      continue =>
-//      foreach { a =>
-//        continue(f(a))
-//      }
+    override def map[B](f: (A) => B): Async[B] = { continue =>
+      foreach { a =>
+        continue(f(a))
+      }
     }
 
-    def flatMap[B](f: (A) => Type[B]): Shift[B] = { continue =>() =>
+    def flatMap[B](f: (A) => Type[B]): Shift[B] = { continue => () =>
       foreach { a =>
         f(a)
           .suspend { b =>
